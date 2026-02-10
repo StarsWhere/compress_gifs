@@ -10,6 +10,7 @@ set -euo pipefail
 #   TOL_MB=1             (允许误差范围，默认 1MB)
 #   VERBOSE_TRIALS=0     (设为 1 打印每个档位结果)
 #   SHOW_FFMPEG=0        (设为 1 显示 ffmpeg 输出)
+#   HWACCEL=auto         (ffmpeg 硬件加速模式，auto/off/cuda/vaapi...)
 
 in_dir="${1:-}"
 out_dir="${2:-}"
@@ -31,6 +32,18 @@ TOL_MB="${TOL_MB:-1}"
 tol_bytes=$((TOL_MB * 1024 * 1024))
 VERBOSE_TRIALS="${VERBOSE_TRIALS:-0}"
 SHOW_FFMPEG="${SHOW_FFMPEG:-0}"
+HWACCEL="${HWACCEL:-auto}"
+hw_enabled=1
+
+case "${HWACCEL,,}" in
+  ""|"0"|"off"|"false"|"cpu"|"none")
+    hw_enabled=0
+    HWACCEL="off"
+    ;;
+  *)
+    : # keep hw_enabled=1
+    ;;
+esac
 
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing command: $1"; exit 2; }; }
 need_cmd ffmpeg
@@ -89,18 +102,55 @@ try_profile() {
   local palette="$tmpdir/palette_${idx}.png"
   local trial="$tmpdir/trial_${idx}.gif"
 
-  if ! ffmpeg -y $ffv -i "$in" \
-    -vf "fps=${fps},scale='min(iw,${w})':-1:flags=lanczos,palettegen=max_colors=${colors}:stats_mode=diff:reserve_transparent=1" \
-    "$palette"; then
-    log "    palettegen FAIL, skip"
-    return 1
+  local palette_vf="fps=${fps},scale='min(iw,${w})':-1:flags=lanczos,palettegen=max_colors=${colors}:stats_mode=diff:reserve_transparent=1"
+  local encode_fc="fps=${fps},scale='min(iw,${w})':-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
+
+  local palette_cmd=(ffmpeg -y)
+  [[ -n "$ffv" ]] && palette_cmd+=($ffv)
+  if (( hw_enabled )); then
+    palette_cmd+=(-hwaccel "$HWACCEL")
+  fi
+  palette_cmd+=(-i "$in" -vf "$palette_vf" "$palette")
+
+  if ! "${palette_cmd[@]}"; then
+    if (( hw_enabled )); then
+      log "    HW accel failed for palettegen, fallback to CPU"
+      hw_enabled=0
+      palette_cmd=(ffmpeg -y)
+      [[ -n "$ffv" ]] && palette_cmd+=($ffv)
+      palette_cmd+=(-i "$in" -vf "$palette_vf" "$palette")
+      if ! "${palette_cmd[@]}"; then
+        log "    palettegen FAIL, skip"
+        return 1
+      fi
+    else
+      log "    palettegen FAIL, skip"
+      return 1
+    fi
   fi
 
-  if ! ffmpeg -y $ffv -i "$in" -i "$palette" \
-    -filter_complex "fps=${fps},scale='min(iw,${w})':-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
-    -loop 0 "$trial"; then
-    log "    encode FAIL, skip"
-    return 1
+  local encode_cmd=(ffmpeg -y)
+  [[ -n "$ffv" ]] && encode_cmd+=($ffv)
+  if (( hw_enabled )); then
+    encode_cmd+=(-hwaccel "$HWACCEL")
+  fi
+  encode_cmd+=(-i "$in" -i "$palette" -filter_complex "$encode_fc" -loop 0 "$trial")
+
+  if ! "${encode_cmd[@]}"; then
+    if (( hw_enabled )); then
+      log "    HW accel failed for encode, fallback to CPU"
+      hw_enabled=0
+      encode_cmd=(ffmpeg -y)
+      [[ -n "$ffv" ]] && encode_cmd+=($ffv)
+      encode_cmd+=(-i "$in" -i "$palette" -filter_complex "$encode_fc" -loop 0 "$trial")
+      if ! "${encode_cmd[@]}"; then
+        log "    encode FAIL, skip"
+        return 1
+      fi
+    else
+      log "    encode FAIL, skip"
+      return 1
+    fi
   fi
 
   local sz
@@ -283,6 +333,7 @@ log "  INPUT_DIR : $in_dir_abs"
 log "  OUTPUT_DIR: $out_dir_abs"
 log "  LIMIT     : $max_bytes ($(human_bytes "$max_bytes"))"
 log "  TOL       : $tol_bytes ($(human_bytes "$tol_bytes"))"
+log "  HWACCEL   : $HWACCEL (enabled=${hw_enabled})"
 
 mapfile -d '' files < <(find "$in_dir_abs" -type f -iname '*.gif' -print0)
 
