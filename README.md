@@ -13,13 +13,13 @@
 ## 用法
 
 ```bash
-./compress_gifs.sh <input_dir> <output_dir>
+./scripts/compress_gifs.sh <input_dir> <output_dir>
 ```
 
 示例：
 
 ```bash
-./compress_gifs.sh ./gifs_in ./gifs_out
+./scripts/compress_gifs.sh ./gifs_in ./gifs_out
 ```
 
 ## 可选环境变量
@@ -36,8 +36,13 @@
 示例：
 
 ```bash
-MAX_MB=8 TOL_MB=1 MAX_W=960 ./compress_gifs.sh ./gifs_in ./gifs_out
+MAX_MB=8 TOL_MB=1 MAX_W=960 ./scripts/compress_gifs.sh ./gifs_in ./gifs_out
 ```
+
+## 前端站点（浏览器端压缩）
+
+- 打开 `index.html` 即可离线使用；核心逻辑与脚本一致，默认预设为“微信表情包”。
+- 压缩在浏览器完成，依赖 ffmpeg.wasm；如浏览器支持 WebGPU，会自动用于像素计算加速。
 
 ## 行为说明
 

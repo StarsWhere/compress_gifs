@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GIF 压缩器 · 微信表情包默认</title>
+  <link rel="preconnect" href="https://fonts.gstatic.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="hero">
+    <div>
+      <p class="eyebrow">纯前端 · 零上传 · 本地浏览器</p>
+      <h1>GIF 压缩器</h1>
+      <p class="sub">默认预设「微信表情包」：10MB / 1024px / 时长 0-4s，支持自定义和专家模式。</p>
+      <div class="cta-row">
+        <button id="primary-action" class="btn primary">选择或拖拽 GIF</button>
+        <label class="btn ghost">
+          <input id="file-input" type="file" accept="image/gif" multiple hidden />
+          批量上传
+        </label>
+        <span id="gpu-badge" class="badge muted">检测 GPU…</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel presets">
+      <div class="panel-head">
+        <h2>预设</h2>
+        <button id="add-preset" class="btn tiny">保存当前</button>
+      </div>
+      <div id="preset-list" class="preset-list"></div>
+      <div class="panel-head spacer">
+        <h3>快速参数</h3>
+      </div>
+      <div class="form-grid">
+        <label>最大体积 (MB)<input type="number" id="max-mb" min="1" step="0.5" /></label>
+        <label>最大宽度 (px)<input type="number" id="max-w" min="64" step="32" /></label>
+        <label>容差 (MB)<input type="number" id="tol-mb" min="0" step="0.2" /></label>
+      </div>
+      <button id="toggle-advanced" class="link-btn">显示高级设置</button>
+      <div id="advanced-panel" class="advanced hidden">
+        <div class="form-grid">
+          <label>时长下限 (s)<input type="number" id="dur-min" min="0" step="0.1" /></label>
+          <label>时长上限 (s)<input type="number" id="dur-max" min="0" step="0.1" /></label>
+          <label>时长容差 (s)<input type="number" id="dur-eps" min="0" step="0.01" /></label>
+        </div>
+        <div class="form-grid">
+          <label class="checkbox"><input type="checkbox" id="prefer-keep" /> 尝试保持原时间轴</label>
+          <label class="checkbox"><input type="checkbox" id="verbose" /> 记录全部档位日志</label>
+          <label class="checkbox"><input type="checkbox" id="show-ffmpeg" /> 显示 ffmpeg 输出</label>
+        </div>
+      </div>
+      <div class="panel-head spacer">
+        <h3>模式</h3>
+      </div>
+      <div class="form-grid">
+        <label class="checkbox"><input type="checkbox" id="expert-mode" /> 专家模式（展示档位与二分细节）</label>
+        <label class="checkbox"><input type="checkbox" id="save-outputs" /> 将输出缓存在浏览器</label>
+      </div>
+    </section>
+
+    <section class="panel workspace">
+      <div class="dropzone" id="dropzone">
+        <p class="drop-title">拖放 GIF 到此或点击按钮</p>
+        <p class="drop-sub">支持批量，处理全程本地。</p>
+      </div>
+      <div id="task-list" class="task-list empty">
+        <p class="empty-tip">还没有任务，先拖拽几个 GIF 试试吧。</p>
+      </div>
+    </section>
+
+    <section class="panel logs">
+      <div class="panel-head">
+        <h2>日志</h2>
+        <button id="clear-logs" class="btn tiny ghost">清除</button>
+      </div>
+      <pre id="log-output" class="log-output"></pre>
+    </section>
+  </main>
+
+  <template id="preset-item-tpl">
+    <div class="preset-item">
+      <div class="title"></div>
+      <div class="meta"></div>
+      <div class="actions">
+        <button class="btn tiny ghost use">使用</button>
+        <button class="btn tiny ghost del">删除</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="task-item-tpl">
+    <div class="task-card">
+      <div class="task-main">
+        <div class="thumb"></div>
+        <div class="info">
+          <div class="title"></div>
+          <div class="metrics"></div>
+          <div class="status-row"></div>
+        </div>
+      </div>
+      <div class="task-actions">
+        <button class="btn tiny ghost download">下载</button>
+        <button class="btn tiny ghost replay">用当前参数重压</button>
+        <button class="btn tiny ghost toggle-log">查看日志</button>
+      </div>
+      <pre class="task-log hidden"></pre>
+    </div>
+  </template>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
