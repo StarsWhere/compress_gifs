@@ -131,6 +131,14 @@ input, select {
   padding: 10px;
   color: var(--text);
 }
+textarea {
+  background: #0b1224;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  color: var(--text);
+  resize: vertical;
+}
 
 .checkbox {
   flex-direction: row;

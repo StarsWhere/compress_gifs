@@ -10,6 +10,8 @@ const DEFAULT_PRESET = {
   preferKeep: true,
   verbose: false,
   showFfmpeg: false,
+  profilesText: '',
+  profiles: [],
 };
 
 const PRESETS_KEY = 'gif_presets_v1';
@@ -39,6 +41,24 @@ const humanBytes = (b) => {
   if (b < 1024) return `${b}B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(2)}KB`;
   return `${(b / 1024 / 1024).toFixed(2)}MB`;
+};
+
+// 将“宽:fps:色彩”逗号分隔的文本解析为档位数组
+const parseProfiles = (text) => {
+  if (!text) return [];
+  const segments = text.split(/[,，]+/).map((s) => s.trim()).filter(Boolean);
+  const profiles = [];
+  segments.forEach((seg) => {
+    const parts = seg.split(':').map((p) => p.trim());
+    if (parts.length !== 3) return;
+    const w = Number(parts[0]) || 0;
+    const fps = parts[1].toLowerCase() === 'keep' ? 'keep' : Number(parts[1]) || 0;
+    const colors = Number(parts[2]) || 0;
+    if (w > 0 && colors > 0 && (fps === 'keep' || fps > 0)) {
+      profiles.push([w, fps, colors]);
+    }
+  });
+  return profiles;
 };
 
 const loadPresets = () => {
@@ -95,15 +115,17 @@ const renderPresets = () => {
 };
 
 const applyPreset = (preset) => {
-  $('#max-mb').value = preset.maxMb;
-  $('#max-w').value = preset.maxW;
-  $('#tol-mb').value = preset.tolMb;
-  $('#dur-min').value = preset.durMin;
-  $('#dur-max').value = preset.durMax;
-  $('#dur-eps').value = preset.durEps;
-  $('#prefer-keep').checked = preset.preferKeep;
-  $('#verbose').checked = preset.verbose;
-  $('#show-ffmpeg').checked = preset.showFfmpeg;
+  const p = { ...DEFAULT_PRESET, ...preset };
+  $('#max-mb').value = p.maxMb;
+  $('#max-w').value = p.maxW;
+  $('#tol-mb').value = p.tolMb;
+  $('#dur-min').value = p.durMin;
+  $('#dur-max').value = p.durMax;
+  $('#dur-eps').value = p.durEps;
+  $('#prefer-keep').checked = p.preferKeep;
+  $('#verbose').checked = p.verbose;
+  $('#show-ffmpeg').checked = p.showFfmpeg;
+  $('#profiles').value = p.profilesText || '';
 };
 
 const readParams = () => ({
@@ -117,6 +139,8 @@ const readParams = () => ({
   verbose: $('#verbose').checked,
   showFfmpeg: $('#show-ffmpeg').checked,
   saveOutputs: $('#save-outputs').checked,
+  profilesText: $('#profiles').value.trim(),
+  profiles: parseProfiles($('#profiles').value.trim()),
 });
 
 const saveCurrentAsPreset = () => {
@@ -317,8 +341,8 @@ const handleFiles = async (files) => {
 
 const setupWorker = () => {
   worker.onmessage = async (event) => {
-    const { type, id, payload } = event.data;
-    if (type === 'ready') {
+  const { type, id, payload } = event.data;
+  if (type === 'ready') {
       state.workerReady = true;
       logGlobal('FFmpeg 已加载');
       return;
@@ -332,13 +356,13 @@ const setupWorker = () => {
       const task = state.tasks.get(id);
       if (!task) return;
       const outBuf = new Uint8Array(payload.buffer);
-      task.outputBlob = new Blob([outBuf], { type: 'image/gif' });
-      // 读取输出元信息以更新宽度/时长显示
-      try {
-        task.outputMeta = await readMetaFromBuffer(outBuf.buffer);
-      } catch (e) {
-        console.warn('读取输出元信息失败', e);
-      }
+  task.outputBlob = new Blob([outBuf], { type: 'image/gif' });
+  // 读取输出元信息以更新宽度/时长显示
+  try {
+    task.outputMeta = await readMetaFromBuffer(outBuf.buffer);
+  } catch (e) {
+    console.warn('读取输出元信息失败', e);
+  }
       task.status = payload.hit ? '达标' : '接近目标';
       task.outputSize = outBuf.length;
       task.bestIdx = payload.bestIdx;

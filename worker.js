@@ -21,26 +21,27 @@ const humanBytes = (b) => {
   return `${(b / 1024 / 1024).toFixed(2)}MB`;
 };
 
-const buildProfiles = (maxW, preferKeep) => {
+const buildProfiles = (maxW, preferKeep, custom = []) => {
+  if (custom && custom.length) return custom;
   const profiles = [];
   if (preferKeep) {
     profiles.push([maxW, 'keep', 256], [maxW, 'keep', 192], [maxW, 'keep', 160]);
   }
   profiles.push(
-    [maxW, 18, 256],
-    [maxW, 15, 256],
-    [maxW, 12, 192],
-    [960, 12, 192],
-    [832, 10, 160],
-    [768, 10, 128],
-    [640, 8, 128],
-    [576, 8, 96],
-    [512, 8, 96],
-    [448, 6, 80],
-    [384, 5, 64],
-    [320, 4, 64],
-    [256, 4, 48],
-    [256, 4, 32]
+    [maxW, 30, 256],
+    [maxW, 30, 256],
+    [maxW, 30, 192],
+    [960, 25, 192],
+    [832, 25, 160],
+    [768, 25, 128],
+    [640, 20, 128],
+    [576, 20, 96],
+    [512, 20, 96],
+    [448, 15, 80],
+    [384, 15, 64],
+    [320, 15, 64],
+    [256, 10, 48],
+    [256, 10, 32]
   );
   return profiles;
 };
@@ -162,10 +163,8 @@ const processOne = async (payload) => {
   };
 
   log(
-    `开始压缩：原始 ${humanBytes(meta.size)}，分辨率 ${meta.width || '?'}x${meta.height || '?'}，时长 ${
-      meta.duration ? `${meta.duration.toFixed(2)}s` : '未知'
-    }，目标上限 ${params.maxMb}MB，容差 ${params.tolMb}MB，最大宽度 ${maxW}px，模式 ${
-      params.preferKeep ? '优先保帧间隔' : '标准'
+    `开始压缩：原始 ${humanBytes(meta.size)}，分辨率 ${meta.width || '?'}x${meta.height || '?'}，时长 ${meta.duration ? `${meta.duration.toFixed(2)}s` : '未知'
+    }，目标上限 ${params.maxMb}MB，容差 ${params.tolMb}MB，最大宽度 ${maxW}px，模式 ${params.preferKeep ? '优先保帧间隔' : '标准'
     }`
   );
 
@@ -183,7 +182,7 @@ const processOne = async (payload) => {
   }
 
   const preferKeep = (!needSize && needScale) || (!needSize && needDur) ? 1 : 0;
-  const profiles = buildProfiles(maxW, preferKeep);
+  const profiles = buildProfiles(maxW, preferKeep, params.profiles);
 
   // boundary trials
   await tryProfile(ctx, 0, ...profiles[0]);
