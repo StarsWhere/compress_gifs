@@ -54,6 +54,7 @@ a { color: inherit; }
   gap: 16px;
   padding: 0 24px 32px;
   min-height: calc(100vh - 160px);
+  align-items: stretch;
 }
 
 .panel {
@@ -62,6 +63,7 @@ a { color: inherit; }
   border-radius: 16px;
   padding: 16px;
   box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+  height: 100%;
 }
 
 .panel-head {
@@ -188,7 +190,7 @@ input, select {
 .task-log { background: #060a16; border: 1px solid var(--border); border-radius: 12px; padding: 10px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .task-log.hidden { display: none; }
 
-.logs { max-height: 720px; min-height: 420px; display: flex; flex-direction: column; }
+.logs { display: flex; flex-direction: column; height: 100%; min-height: 420px; }
 .log-output { background: #060a16; border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 260px; flex: 1; color: #d1d5db; white-space: pre-wrap; word-break: break-word; }
 
 .badge.ok { color: var(--success); }
