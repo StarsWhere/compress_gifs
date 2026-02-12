@@ -1,12 +1,11 @@
-FROM nginx:1.27-alpine
+FROM python:3.12-alpine
 
-# Copy custom nginx config (adds wasm mime + simple SPA fallback)
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+WORKDIR /usr/src/app
 
 # Copy static assets
-COPY . /usr/share/nginx/html
+COPY . .
 
-# Expose HTTP port
-EXPOSE 80
+# Expose HTTP port used by python -m http.server
+EXPOSE 8086
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["python", "-m", "http.server", "8086"]
