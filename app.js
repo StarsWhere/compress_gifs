@@ -232,9 +232,9 @@ const upsertTaskCard = (task) => {
   const outH = task.outputMeta?.height ?? task.meta.height ?? '?';
   const outDur = task.outputMeta?.duration ?? task.meta.duration;
   const metricText = task.outputSize
-    ? `原始 ${humanBytes(task.meta.size)} → 输出 ${humanBytes(task.outputSize)} · ${outW}${outH ? `x${outH}` : ''} · 时长 ${outDur ? `${outDur.toFixed(2)}s` : '未知'} · 档位 ${task.bestIdx ?? '?'}`
+    ? `原始 ${humanBytes(task.meta.size)} · ${task.meta.width || '?'}x${task.meta.height || '?'} · ${task.meta.duration ? `${task.meta.duration.toFixed(2)}s` : '时长未知'}\n输出 ${humanBytes(task.outputSize)} · ${outW}${outH ? `x${outH}` : ''} · 时长 ${outDur ? `${outDur.toFixed(2)}s` : '未知'} · 档位 ${task.bestIdx ?? '?'}`
     : `原始 ${humanBytes(task.meta.size)} · ${task.meta.width || '?'}x${task.meta.height || '?'} · ${task.meta.duration ? `${task.meta.duration.toFixed(2)}s` : '时长未知'}`;
-  el.querySelector('.metrics').textContent = metricText;
+  el.querySelector('.metrics').innerHTML = metricText.replace(/\\n/g, '<br>');
   if (task.thumbUrl) {
     el.querySelector('.thumb').style.backgroundImage = `url('${task.thumbUrl}')`;
   }
