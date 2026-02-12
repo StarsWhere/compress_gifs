@@ -5,7 +5,7 @@ const DEFAULT_PRESET = {
   maxW: 1024,
   tolMb: 1,
   durMin: 0,
-  durMax: 4,
+  durMax: 6,
   durEps: 0.02,
   preferKeep: true,
   verbose: false,
@@ -14,7 +14,7 @@ const DEFAULT_PRESET = {
   profiles: [],
 };
 
-const PRESETS_KEY = 'gif_presets_v1';
+const PRESETS_KEY = 'gif_presets_v2'; // bump to apply new默认时长 0-6s
 const CURRENT_KEY = 'gif_current_preset';
 
 const $ = (sel) => document.querySelector(sel);
