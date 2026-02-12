@@ -6,11 +6,10 @@ set -euo pipefail
 #
 # 可选环境变量:
 #   MAX_MB=10            (目标上限，默认 10MB)
-#   MAX_W=1024           (最大宽度，默认 1024)
+#   MAX_W=1024           (最大宽度，默认 1024；即使体积已达标，也会确保输出宽度不超过此值)
 #   TOL_MB=1             (允许误差范围，默认 1MB)
 #   VERBOSE_TRIALS=0     (设为 1 打印每个档位结果)
 #   SHOW_FFMPEG=0        (设为 1 显示 ffmpeg 输出)
-#   HWACCEL=auto         (ffmpeg 硬件加速模式，auto/off/cuda/vaapi...)
 
 in_dir="${1:-}"
 out_dir="${2:-}"
@@ -25,28 +24,17 @@ if [[ ! -d "$in_dir" ]]; then
 fi
 mkdir -p "$out_dir"
 
-MAX_MB="${MAX_MB:-9}"
+MAX_MB="${MAX_MB:-10}"
 max_bytes=$((MAX_MB * 1024 * 1024))
 max_w="${MAX_W:-1024}"
 TOL_MB="${TOL_MB:-1}"
 tol_bytes=$((TOL_MB * 1024 * 1024))
 VERBOSE_TRIALS="${VERBOSE_TRIALS:-0}"
 SHOW_FFMPEG="${SHOW_FFMPEG:-0}"
-HWACCEL="${HWACCEL:-auto}"
-hw_enabled=1
-
-case "${HWACCEL,,}" in
-  ""|"0"|"off"|"false"|"cpu"|"none")
-    hw_enabled=0
-    HWACCEL="off"
-    ;;
-  *)
-    : # keep hw_enabled=1
-    ;;
-esac
 
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing command: $1"; exit 2; }; }
 need_cmd ffmpeg
+need_cmd ffprobe
 need_cmd find
 need_cmd realpath
 need_cmd stat
@@ -65,11 +53,32 @@ file_size() {
   stat -c '%s' "$1" 2>/dev/null || wc -c < "$1"
 }
 
+gif_width() {
+  # 输出数字宽度；失败则输出空
+  ffprobe -v error -select_streams v:0 -show_entries stream=width \
+    -of default=nw=1:nk=1 "$1" 2>/dev/null | head -n 1 | tr -d '\r'
+}
+
 log() { echo "[$(ts)] $*"; }
 
 # 全局档位数组：越往后压得越狠、体积越小（大致单调）
+# 第二维 fps 可以是数字，或 "keep" 表示不强制重采样 fps（尽量保留原时间轴/帧间隔）
 build_profiles() {
-  profiles=(
+  local prefer_keep_timing="${1:-0}"
+
+  profiles=()
+
+  if [[ "$prefer_keep_timing" == "1" ]]; then
+    # 先尝试只缩放/尽量保留时间轴的组合（通常在“体积已达标但宽度超限”时更合理）
+    profiles+=(
+      "$max_w keep 256"
+      "$max_w keep 192"
+      "$max_w keep 160"
+    )
+  fi
+
+  # 常规压缩档位（含降 fps）
+  profiles+=(
     "$max_w 18 256"
     "$max_w 15 256"
     "$max_w 12 192"
@@ -102,55 +111,23 @@ try_profile() {
   local palette="$tmpdir/palette_${idx}.png"
   local trial="$tmpdir/trial_${idx}.gif"
 
-  local palette_vf="fps=${fps},scale='min(iw,${w})':-1:flags=lanczos,palettegen=max_colors=${colors}:stats_mode=diff:reserve_transparent=1"
-  local encode_fc="fps=${fps},scale='min(iw,${w})':-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
-
-  local palette_cmd=(ffmpeg -y)
-  [[ -n "$ffv" ]] && palette_cmd+=($ffv)
-  if (( hw_enabled )); then
-    palette_cmd+=(-hwaccel "$HWACCEL")
-  fi
-  palette_cmd+=(-i "$in" -vf "$palette_vf" "$palette")
-
-  if ! "${palette_cmd[@]}"; then
-    if (( hw_enabled )); then
-      log "    HW accel failed for palettegen, fallback to CPU"
-      hw_enabled=0
-      palette_cmd=(ffmpeg -y)
-      [[ -n "$ffv" ]] && palette_cmd+=($ffv)
-      palette_cmd+=(-i "$in" -vf "$palette_vf" "$palette")
-      if ! "${palette_cmd[@]}"; then
-        log "    palettegen FAIL, skip"
-        return 1
-      fi
-    else
-      log "    palettegen FAIL, skip"
-      return 1
-    fi
+  local fps_prefix=""
+  if [[ "$fps" != "keep" ]]; then
+    fps_prefix="fps=${fps},"
   fi
 
-  local encode_cmd=(ffmpeg -y)
-  [[ -n "$ffv" ]] && encode_cmd+=($ffv)
-  if (( hw_enabled )); then
-    encode_cmd+=(-hwaccel "$HWACCEL")
+  if ! ffmpeg -y $ffv -i "$in" \
+    -vf "${fps_prefix}scale='min(iw,${w})':-1:flags=lanczos,palettegen=max_colors=${colors}:stats_mode=diff:reserve_transparent=1" \
+    "$palette"; then
+    log "    palettegen FAIL, skip"
+    return 1
   fi
-  encode_cmd+=(-i "$in" -i "$palette" -filter_complex "$encode_fc" -loop 0 "$trial")
 
-  if ! "${encode_cmd[@]}"; then
-    if (( hw_enabled )); then
-      log "    HW accel failed for encode, fallback to CPU"
-      hw_enabled=0
-      encode_cmd=(ffmpeg -y)
-      [[ -n "$ffv" ]] && encode_cmd+=($ffv)
-      encode_cmd+=(-i "$in" -i "$palette" -filter_complex "$encode_fc" -loop 0 "$trial")
-      if ! "${encode_cmd[@]}"; then
-        log "    encode FAIL, skip"
-        return 1
-      fi
-    else
-      log "    encode FAIL, skip"
-      return 1
-    fi
+  if ! ffmpeg -y $ffv -i "$in" -i "$palette" \
+    -filter_complex "${fps_prefix}scale='min(iw,${w})':-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+    -loop 0 "$trial"; then
+    log "    encode FAIL, skip"
+    return 1
   fi
 
   local sz
@@ -199,19 +176,38 @@ process_one() {
 
   mkdir -p "$(dirname "$out")"
 
-  local in_sz
+  local in_sz in_w
   in_sz="$(file_size "$in")"
+  in_w="$(gif_width "$in" || true)"
+
   log "START file"
   log "  IN : $in"
   log "  OUT: $out"
   log "  IN_SIZE : $in_sz ($(human_bytes "$in_sz"))"
   log "  LIMIT   : $max_bytes ($(human_bytes "$max_bytes"))"
+  log "  MAX_W   : $max_w"
+
+  if [[ -n "$in_w" ]]; then
+    log "  IN_W    : $in_w"
+  else
+    log "  IN_W    : (unknown; ffprobe failed) -> will enforce scaling by re-encode"
+    in_w=$((max_w + 1))
+  fi
+
   log "  TOL     : $tol_bytes ($(human_bytes "$tol_bytes"))"
 
-  # 如果原文件已经 <= 上限，直接复制（避免无意义重编码）
-  if (( in_sz <= max_bytes )); then
+  local need_size=0
+  local need_scale=0
+  if (( in_sz > max_bytes )); then need_size=1; fi
+  if (( in_w > max_w )); then need_scale=1; fi
+
+  log "  NEED_SIZE : $need_size"
+  log "  NEED_SCALE: $need_scale"
+
+  # 只有在：体积达标 且 宽度达标 时，才直接复制
+  if (( need_size == 0 && need_scale == 0 )); then
     cp -f "$in" "$out"
-    log "  SKIP COMPRESS: already <= limit, copied as is"
+    log "  SKIP COMPRESS: already <= limit AND width ok, copied as is"
     log "END  file OK (no re-encode)"
     return 0
   fi
@@ -243,9 +239,15 @@ process_one() {
     ffv=""
   fi
 
-  build_profiles
+  # 若“仅需要缩放”（体积已达标但宽度超限），优先尝试 keep timing 的档位
+  local prefer_keep_timing=0
+  if (( need_scale == 1 && need_size == 0 )); then
+    prefer_keep_timing=1
+  fi
+
+  build_profiles "$prefer_keep_timing"
   local total_profiles="${#profiles[@]}"
-  log "  PROFILE_COUNT: $total_profiles"
+  log "  PROFILE_COUNT: $total_profiles (prefer_keep_timing=$prefer_keep_timing)"
 
   if (( total_profiles == 0 )); then
     log "  ERROR: no profiles defined, copy original"
@@ -297,14 +299,12 @@ process_one() {
 
     try_profile "$mid"
 
-    # 如果已经命中“误差范围内且 <= 限制”，直接停
     if (( hit_within_tol == 1 )); then
       break
     fi
 
-    # 根据当前结果大小决定往哪边搜：
     # 太大 -> 往更重压缩（右边，idx 变大）
-    # 不大于目标 -> 往更轻压缩（左边，idx 变小），试图找更清晰但仍接近目标
+    # 不大于目标 -> 往更轻压缩（左边，idx 变小）
     if (( last_sz > target )); then
       l=$((mid + 1))
     else
@@ -315,12 +315,9 @@ process_one() {
   cp -f "$best_file" "$out"
   if (( hit_within_tol == 1 )); then
     log "END  file OK (hit within tolerance, best_idx=$best_idx size=$best_size ($(human_bytes "$best_size")))"
-
     return 0
   else
     log "END  file WARN (no profile within tolerance, used best_idx=$best_idx size=$best_size ($(human_bytes "$best_size")))"
-
-    # 这里返回 1 表示“未达误差要求”，但写出了“最贴合”的结果
     return 1
   fi
 }
@@ -332,8 +329,8 @@ log "JOB START"
 log "  INPUT_DIR : $in_dir_abs"
 log "  OUTPUT_DIR: $out_dir_abs"
 log "  LIMIT     : $max_bytes ($(human_bytes "$max_bytes"))"
+log "  MAX_W     : $max_w"
 log "  TOL       : $tol_bytes ($(human_bytes "$tol_bytes"))"
-log "  HWACCEL   : $HWACCEL (enabled=${hw_enabled})"
 
 mapfile -d '' files < <(find "$in_dir_abs" -type f -iname '*.gif' -print0)
 
