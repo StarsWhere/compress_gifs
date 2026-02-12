@@ -1,15 +1,14 @@
 // Web Worker: runs ffmpeg.wasm to mirror compress_gifs.sh logic (simplified for browser)
-import { createFFmpeg, fetchFile } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.mjs';
+// Use locally bundled ffmpeg to avoid CORS/MIME issues
+import { FFmpeg } from './vendor/ffmpeg/index.js';
 
 let currentTaskId = null;
 
-const ffmpeg = createFFmpeg({
-  corePath: 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/ffmpeg-core.js',
-  log: ({ type, message }) => {
-    if (type === 'info' || type === 'fferr') {
-      postMessage({ type: 'log', id: currentTaskId, payload: message });
-    }
-  },
+const ffmpeg = new FFmpeg();
+ffmpeg.on('log', ({ type, message }) => {
+  if (type === 'info' || type === 'fferr' || type === 'ffout' || type === 'warn') {
+    postMessage({ type: 'log', id: currentTaskId, payload: message });
+  }
 });
 
 const humanBytes = (b) => {
@@ -43,18 +42,18 @@ const buildProfiles = (maxW, preferKeep) => {
 };
 
 const loadFFmpeg = async () => {
-  if (!ffmpeg.isLoaded()) {
-    await ffmpeg.load();
-  }
+  if (ffmpeg.loaded) return;
+  // paths are resolved relative to vendor/ffmpeg/* because FFmpeg's own worker lives there
+  await ffmpeg.load();
 };
 
 const writeInput = async (name, buffer) => {
   await ffmpeg.writeFile(name, buffer);
 };
 
-const removeFileSafe = (name) => {
+const removeFileSafe = async (name) => {
   try {
-    ffmpeg.unlink(name);
+    await ffmpeg.deleteFile(name);
   } catch (_) {
     /* ignore */
   }
@@ -72,16 +71,16 @@ const tryProfile = async (ctx, profileIdx, w, fps, colors) => {
   const useFilter = `[0:v]${timefix}${fpsFilter}${scale}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`;
 
   try {
-    await ffmpeg.run(
+    await ffmpeg.exec([
       '-v',
       params.showFfmpeg ? 'info' : 'error',
       '-i',
       inputName,
       '-vf',
       paletteFilter,
-      palette
-    );
-    await ffmpeg.run(
+      palette,
+    ]);
+    await ffmpeg.exec([
       '-v',
       params.showFfmpeg ? 'info' : 'error',
       '-i',
@@ -92,8 +91,8 @@ const tryProfile = async (ctx, profileIdx, w, fps, colors) => {
       useFilter,
       '-loop',
       '0',
-      trial
-    );
+      trial,
+    ]);
     const data = await ffmpeg.readFile(trial);
     const sz = data.length;
     const absDiff = sz > target ? sz - target : target - sz;
@@ -115,8 +114,8 @@ const tryProfile = async (ctx, profileIdx, w, fps, colors) => {
     postMessage({ type: 'log', payload: `PROFILE ${profileIdx} failed: ${err.message || err}` });
     return null;
   } finally {
-    removeFileSafe(palette);
-    removeFileSafe(trial);
+    await removeFileSafe(palette);
+    await removeFileSafe(trial);
   }
 };
 
@@ -213,7 +212,7 @@ self.onmessage = async (event) => {
     } catch (err) {
       postMessage({ type: 'error', id, payload: err.message || String(err) });
     } finally {
-      removeFileSafe(`in_${id}.gif`);
+      await removeFileSafe(`in_${id}.gif`);
       currentTaskId = null;
     }
   }

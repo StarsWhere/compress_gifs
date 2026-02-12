@@ -150,7 +150,8 @@ const setGpuBadge = () => {
 
 const ensureGifuct = async () => {
   if (!state.gifuct) {
-    state.gifuct = await import('https://unpkg.com/gifuct-js@2.1.2/dist/gifuct.esm.js');
+    // use bundled local copy to avoid CORS/MIME issues from CDN
+    state.gifuct = await import('./vendor/gifuct/gifuct.esm.js');
   }
   return state.gifuct;
 };
