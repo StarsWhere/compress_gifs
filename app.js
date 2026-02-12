@@ -1,7 +1,7 @@
 const DEFAULT_PRESET = {
   id: 'wechat',
   name: '微信表情包',
-  maxMb: 10,
+  maxMb: 9,
   maxW: 1024,
   tolMb: 1,
   durMin: 0,
@@ -158,6 +158,11 @@ const ensureGifuct = async () => {
 
 const readMeta = async (file) => {
   const arrayBuffer = await file.arrayBuffer();
+  return readMetaFromBuffer(arrayBuffer, file);
+};
+
+// 仅从已知 ArrayBuffer 读取元信息，不再保留原始 buffer（用于输出文件）
+const readMetaFromBuffer = async (arrayBuffer, fileLike = null) => {
   let width = null;
   let height = null;
   let duration = null;
@@ -197,7 +202,14 @@ const readMeta = async (file) => {
     }
   }
 
-  return { rawBuffer: arrayBuffer, size: file.size, width, height, duration, frameCount };
+  return {
+    rawBuffer: fileLike ? arrayBuffer : arrayBuffer, // 入参需要保留时用原值
+    size: fileLike ? (fileLike.size ?? arrayBuffer.byteLength) : arrayBuffer.byteLength,
+    width,
+    height,
+    duration,
+    frameCount,
+  };
 };
 
 const setTaskStatus = (taskEl, statusText, tone = 'muted') => {
@@ -216,8 +228,11 @@ const upsertTaskCard = (task) => {
   }
 
   el.querySelector('.title').textContent = task.file.name;
+  const outW = task.outputMeta?.width ?? task.meta.width ?? '?';
+  const outH = task.outputMeta?.height ?? task.meta.height ?? '?';
+  const outDur = task.outputMeta?.duration ?? task.meta.duration;
   const metricText = task.outputSize
-    ? `原始 ${humanBytes(task.meta.size)} → 输出 ${humanBytes(task.outputSize)} · 宽 ${task.meta.width || '?'} · 时长 ${task.meta.duration ? `${task.meta.duration.toFixed(2)}s` : '未知'} · 档位 ${task.bestIdx ?? '?' }`
+    ? `原始 ${humanBytes(task.meta.size)} → 输出 ${humanBytes(task.outputSize)} · ${outW}${outH ? `x${outH}` : ''} · 时长 ${outDur ? `${outDur.toFixed(2)}s` : '未知'} · 档位 ${task.bestIdx ?? '?'}`
     : `原始 ${humanBytes(task.meta.size)} · ${task.meta.width || '?'}x${task.meta.height || '?'} · ${task.meta.duration ? `${task.meta.duration.toFixed(2)}s` : '时长未知'}`;
   el.querySelector('.metrics').textContent = metricText;
   if (task.thumbUrl) {
@@ -299,7 +314,7 @@ const handleFiles = async (files) => {
 };
 
 const setupWorker = () => {
-  worker.onmessage = (event) => {
+  worker.onmessage = async (event) => {
     const { type, id, payload } = event.data;
     if (type === 'ready') {
       state.workerReady = true;
@@ -316,6 +331,12 @@ const setupWorker = () => {
       if (!task) return;
       const outBuf = new Uint8Array(payload.buffer);
       task.outputBlob = new Blob([outBuf], { type: 'image/gif' });
+      // 读取输出元信息以更新宽度/时长显示
+      try {
+        task.outputMeta = await readMetaFromBuffer(outBuf.buffer);
+      } catch (e) {
+        console.warn('读取输出元信息失败', e);
+      }
       task.status = payload.hit ? '达标' : '接近目标';
       task.outputSize = outBuf.length;
       task.bestIdx = payload.bestIdx;

@@ -5,7 +5,7 @@ set -euo pipefail
 #   ./compress_gifs.sh /path/to/in_dir /path/to/out_dir
 #
 # 可选环境变量:
-#   MAX_MB=10            (目标上限，默认 10MB)
+#   MAX_MB=9             (目标上限，默认 9MB)
 #   MAX_W=1024           (最大宽度，默认 1024；即使体积已达标，也会确保输出宽度不超过此值)
 #   TOL_MB=1             (允许误差范围，默认 1MB)
 #   DUR_MIN=0            (目标时长下限秒，默认 0)
@@ -27,7 +27,7 @@ if [[ ! -d "$in_dir" ]]; then
 fi
 mkdir -p "$out_dir"
 
-MAX_MB="${MAX_MB:-10}"
+MAX_MB="${MAX_MB:-9}"
 max_bytes=$((MAX_MB * 1024 * 1024))
 max_w="${MAX_W:-1024}"
 TOL_MB="${TOL_MB:-1}"
