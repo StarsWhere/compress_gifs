@@ -224,6 +224,8 @@ const upsertTaskCard = (task) => {
     el = tpl.content.cloneNode(true).firstElementChild;
     task.dom = el;
     $('#task-list').classList.remove('empty');
+    const tip = document.querySelector('#task-list .empty-tip');
+    if (tip) tip.style.display = 'none';
     $('#task-list').appendChild(el);
   }
 
