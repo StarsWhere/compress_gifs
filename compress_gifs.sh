@@ -8,6 +8,9 @@ set -euo pipefail
 #   MAX_MB=10            (目标上限，默认 10MB)
 #   MAX_W=1024           (最大宽度，默认 1024；即使体积已达标，也会确保输出宽度不超过此值)
 #   TOL_MB=1             (允许误差范围，默认 1MB)
+#   DUR_MIN=0            (目标时长下限秒，默认 0)
+#   DUR_MAX=4            (目标时长上限秒，默认 4)
+#   DUR_EPS=0.02         (时长比较容差秒，默认 0.02；避免 ffprobe 浮点误差导致误判)
 #   VERBOSE_TRIALS=0     (设为 1 打印每个档位结果)
 #   SHOW_FFMPEG=0        (设为 1 显示 ffmpeg 输出)
 
@@ -29,6 +32,9 @@ max_bytes=$((MAX_MB * 1024 * 1024))
 max_w="${MAX_W:-1024}"
 TOL_MB="${TOL_MB:-1}"
 tol_bytes=$((TOL_MB * 1024 * 1024))
+DUR_MIN="${DUR_MIN:-0}"
+DUR_MAX="${DUR_MAX:-4}"
+DUR_EPS="${DUR_EPS:-0.02}"
 VERBOSE_TRIALS="${VERBOSE_TRIALS:-0}"
 SHOW_FFMPEG="${SHOW_FFMPEG:-0}"
 
@@ -39,6 +45,7 @@ need_cmd find
 need_cmd realpath
 need_cmd stat
 need_cmd mktemp
+need_cmd awk
 
 ts() { date +"%Y-%m-%d %H:%M:%S"; }
 
@@ -59,7 +66,57 @@ gif_width() {
     -of default=nw=1:nk=1 "$1" 2>/dev/null | head -n 1 | tr -d '\r'
 }
 
+gif_duration() {
+  # 输出秒数(浮点)，失败则输出空
+  local d=""
+  d="$(ffprobe -v error -show_entries format=duration \
+    -of default=nw=1:nk=1 "$1" 2>/dev/null | head -n 1 | tr -d '\r')"
+
+  if [[ -n "$d" && "$d" != "N/A" ]]; then
+    echo "$d"
+    return 0
+  fi
+
+  # fallback: 累加每帧 pkt_duration_time
+  d="$(ffprobe -v error -select_streams v:0 -show_entries frame=pkt_duration_time \
+    -of csv=p=0 "$1" 2>/dev/null \
+    | awk 'BEGIN{sum=0} {if($1!="") sum+=$1} END{if(sum>0) printf "%.6f", sum}')"
+  if [[ -n "$d" ]]; then
+    echo "$d"
+    return 0
+  fi
+
+  # fallback2: stream duration
+  d="$(ffprobe -v error -select_streams v:0 -show_entries stream=duration \
+    -of default=nw=1:nk=1 "$1" 2>/dev/null | head -n 1 | tr -d '\r')"
+  if [[ -n "$d" && "$d" != "N/A" ]]; then
+    echo "$d"
+    return 0
+  fi
+
+  return 1
+}
+
 log() { echo "[$(ts)] $*"; }
+
+check_duration_range() {
+  # return:
+  #   0 ok
+  #   1 out of range
+  #   2 unknown
+  local f="$1"
+  local d
+  d="$(gif_duration "$f" || true)"
+  if [[ -z "$d" ]]; then
+    return 2
+  fi
+  if awk -v d="$d" -v lo="$DUR_MIN" -v hi="$DUR_MAX" -v eps="$DUR_EPS" 'BEGIN{
+    exit !((d+0) >= (lo-eps) && (d+0) <= (hi+eps))
+  }'; then
+    return 0
+  fi
+  return 1
+}
 
 # 全局档位数组：越往后压得越狠、体积越小（大致单调）
 # 第二维 fps 可以是数字，或 "keep" 表示不强制重采样 fps（尽量保留原时间轴/帧间隔）
@@ -69,7 +126,7 @@ build_profiles() {
   profiles=()
 
   if [[ "$prefer_keep_timing" == "1" ]]; then
-    # 先尝试只缩放/尽量保留时间轴的组合（通常在“体积已达标但宽度超限”时更合理）
+    # 先尝试只缩放/尽量保留 fps 的组合（常见于“只需要调宽度/时长、不想动帧采样”的场景）
     profiles+=(
       "$max_w keep 256"
       "$max_w keep 192"
@@ -98,6 +155,7 @@ build_profiles() {
 
 # 下面几个变量在 process_one 和 try_profile 之间共享:
 # in, target, tol_bytes, tmpdir, ffv
+# timefix_prefix
 # profiles[], best_file, best_size, best_diff, best_side, best_idx
 # hit_within_tol, last_sz, last_side
 
@@ -117,14 +175,14 @@ try_profile() {
   fi
 
   if ! ffmpeg -y $ffv -i "$in" \
-    -vf "${fps_prefix}scale='min(iw,${w})':-1:flags=lanczos,palettegen=max_colors=${colors}:stats_mode=diff:reserve_transparent=1" \
+    -vf "${timefix_prefix}${fps_prefix}scale='min(iw,${w})':-1:flags=lanczos,palettegen=max_colors=${colors}:stats_mode=diff:reserve_transparent=1" \
     "$palette"; then
     log "    palettegen FAIL, skip"
     return 1
   fi
 
   if ! ffmpeg -y $ffv -i "$in" -i "$palette" \
-    -filter_complex "${fps_prefix}scale='min(iw,${w})':-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+    -filter_complex "[0:v]${timefix_prefix}${fps_prefix}scale='min(iw,${w})':-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
     -loop 0 "$trial"; then
     log "    encode FAIL, skip"
     return 1
@@ -195,6 +253,59 @@ process_one() {
   fi
 
   log "  TOL     : $tol_bytes ($(human_bytes "$tol_bytes"))"
+  log "  DUR_RANGE: ${DUR_MIN}-${DUR_MAX}s (eps=${DUR_EPS}s)"
+
+  # 最优先：时长归一化（若不在范围内则通过 setpts 加速/减速；帧数不变，等效 fps 会随之变化）
+  local in_dur
+  in_dur="$(gif_duration "$in" || true)"
+
+  if [[ -n "$in_dur" ]]; then
+    log "  IN_DUR  : ${in_dur}s"
+  else
+    log "  IN_DUR  : (unknown; ffprobe failed)"
+  fi
+
+  local need_dur=0
+  timefix_prefix=""
+
+  if [[ -n "$in_dur" ]]; then
+    need_dur="$(awk -v d="$in_dur" -v lo="$DUR_MIN" -v hi="$DUR_MAX" -v eps="$DUR_EPS" 'BEGIN{
+      if ((d+0) < (lo-eps) || (d+0) > (hi+eps)) print 1; else print 0
+    }')"
+
+    if (( need_dur == 1 )); then
+      local target_dur speed_factor
+      target_dur="$(awk -v d="$in_dur" -v lo="$DUR_MIN" -v hi="$DUR_MAX" 'BEGIN{
+        t=d+0; if(t<lo) t=lo; if(t>hi) t=hi;
+        if(t<=0) t=0.001;
+        printf "%.6f", t
+      }')"
+
+      speed_factor="$(awk -v old="$in_dur" -v new="$target_dur" 'BEGIN{
+        if(old<=0){exit 1}
+        printf "%.10f", (new/old)
+      }' || true)"
+
+      if [[ -n "$speed_factor" ]]; then
+        timefix_prefix="setpts=${speed_factor}*PTS,"
+        if awk -v f="$speed_factor" 'BEGIN{exit !(f<1)}'; then
+          log "  NEED_DUR: 1 (speed up)  target=${target_dur}s factor=${speed_factor}"
+        elif awk -v f="$speed_factor" 'BEGIN{exit !(f>1)}'; then
+          log "  NEED_DUR: 1 (slow down) target=${target_dur}s factor=${speed_factor}"
+        else
+          log "  NEED_DUR: 1 (no-op?)   target=${target_dur}s factor=${speed_factor}"
+        fi
+      else
+        log "  NEED_DUR: 1 but cannot compute factor -> skip duration normalization"
+        need_dur=0
+        timefix_prefix=""
+      fi
+    else
+      log "  NEED_DUR: 0"
+    fi
+  else
+    log "  NEED_DUR: (unknown) -> skip duration normalization"
+  fi
 
   local need_size=0
   local need_scale=0
@@ -203,11 +314,12 @@ process_one() {
 
   log "  NEED_SIZE : $need_size"
   log "  NEED_SCALE: $need_scale"
+  log "  NEED_DUR  : $need_dur"
 
-  # 只有在：体积达标 且 宽度达标 时，才直接复制
-  if (( need_size == 0 && need_scale == 0 )); then
+  # 只有在：体积达标 且 宽度达标 且 时长达标 时，才直接复制
+  if (( need_size == 0 && need_scale == 0 && need_dur == 0 )); then
     cp -f "$in" "$out"
-    log "  SKIP COMPRESS: already <= limit AND width ok, copied as is"
+    log "  SKIP COMPRESS: already <= limit AND width ok AND duration ok, copied as is"
     log "END  file OK (no re-encode)"
     return 0
   fi
@@ -239,9 +351,9 @@ process_one() {
     ffv=""
   fi
 
-  # 若“仅需要缩放”（体积已达标但宽度超限），优先尝试 keep timing 的档位
+  # 若“只需要缩放/只需要调时长”（体积已达标），优先尝试 keep fps 的档位
   local prefer_keep_timing=0
-  if (( need_scale == 1 && need_size == 0 )); then
+  if (( (need_scale == 1 && need_size == 0) || (need_dur == 1 && need_size == 0) )); then
     prefer_keep_timing=1
   fi
 
@@ -256,32 +368,71 @@ process_one() {
     return 1
   fi
 
-  # 先试边界：最轻和最重
-  try_profile 0
+  # 先试边界：最轻和最重（注意 set -e，失败要吞掉）
+  try_profile 0 || true
   if (( hit_within_tol == 1 )); then
-    cp -f "$best_file" "$out"
-    log "END  file OK (hit at idx=0 boundary)"
-    return 0
+    if [[ -f "$best_file" ]]; then
+      cp -f "$best_file" "$out"
+      check_duration_range "$out"
+      case "$?" in
+        0) log "  OUT_DUR : $(gif_duration "$out" || true)s (OK)" ;;
+        1) log "  OUT_DUR : $(gif_duration "$out" || true)s (OUT OF RANGE!)" ; log "END  file WARN (duration out of range)"; return 1 ;;
+        2) log "  OUT_DUR : (unknown; ffprobe failed)" ;;
+      esac
+      log "END  file OK (hit at idx=0 boundary)"
+      return 0
+    else
+      log "  ERROR: best_file missing after trials, copy original"
+      cp -f "$in" "$out"
+      log "END  file WARN (encode failed)"
+      return 1
+    fi
   fi
 
   if (( total_profiles > 1 )); then
     local last_idx=$((total_profiles - 1))
-    try_profile "$last_idx"
+    try_profile "$last_idx" || true
     if (( hit_within_tol == 1 )); then
-      cp -f "$best_file" "$out"
-      log "END  file OK (hit at idx=$last_idx boundary)"
-      return 0
+      if [[ -f "$best_file" ]]; then
+        cp -f "$best_file" "$out"
+        check_duration_range "$out"
+        case "$?" in
+          0) log "  OUT_DUR : $(gif_duration "$out" || true)s (OK)" ;;
+          1) log "  OUT_DUR : $(gif_duration "$out" || true)s (OUT OF RANGE!)" ; log "END  file WARN (duration out of range)"; return 1 ;;
+          2) log "  OUT_DUR : (unknown; ffprobe failed)" ;;
+        esac
+        log "END  file OK (hit at idx=$last_idx boundary)"
+        return 0
+      else
+        log "  ERROR: best_file missing after trials, copy original"
+        cp -f "$in" "$out"
+        log "END  file WARN (encode failed)"
+        return 1
+      fi
     fi
   fi
 
   # 如果只有 1 或 2 个档位，边界已经试完，直接用 best
   if (( total_profiles <= 2 )); then
-    cp -f "$best_file" "$out"
-    if (( hit_within_tol == 1 )); then
-      log "END  file OK (small profile set)"
-      return 0
+    if [[ -f "$best_file" ]]; then
+      cp -f "$best_file" "$out"
+      check_duration_range "$out"
+      case "$?" in
+        0) log "  OUT_DUR : $(gif_duration "$out" || true)s (OK)" ;;
+        1) log "  OUT_DUR : $(gif_duration "$out" || true)s (OUT OF RANGE!)" ; log "END  file WARN (duration out of range)"; return 1 ;;
+        2) log "  OUT_DUR : (unknown; ffprobe failed)" ;;
+      esac
+      if (( hit_within_tol == 1 )); then
+        log "END  file OK (small profile set)"
+        return 0
+      else
+        log "END  file WARN (no profile within tolerance, used best boundary idx=$best_idx)"
+        return 1
+      fi
     else
-      log "END  file WARN (no profile within tolerance, used best boundary idx=$best_idx)"
+      log "  ERROR: best_file missing after trials, copy original"
+      cp -f "$in" "$out"
+      log "END  file WARN (encode failed)"
       return 1
     fi
   fi
@@ -297,7 +448,7 @@ process_one() {
     local mid=$(((l + r) / 2))
     log "  BSEARCH iter=$iterations l=$l r=$r mid=$mid"
 
-    try_profile "$mid"
+    try_profile "$mid" || true
 
     if (( hit_within_tol == 1 )); then
       break
@@ -312,12 +463,26 @@ process_one() {
     fi
   done
 
-  cp -f "$best_file" "$out"
-  if (( hit_within_tol == 1 )); then
-    log "END  file OK (hit within tolerance, best_idx=$best_idx size=$best_size ($(human_bytes "$best_size")))"
-    return 0
+  if [[ -f "$best_file" ]]; then
+    cp -f "$best_file" "$out"
+    check_duration_range "$out"
+    case "$?" in
+      0) log "  OUT_DUR : $(gif_duration "$out" || true)s (OK)" ;;
+      1) log "  OUT_DUR : $(gif_duration "$out" || true)s (OUT OF RANGE!)" ; log "END  file WARN (duration out of range)"; return 1 ;;
+      2) log "  OUT_DUR : (unknown; ffprobe failed)" ;;
+    esac
+
+    if (( hit_within_tol == 1 )); then
+      log "END  file OK (hit within tolerance, best_idx=$best_idx size=$best_size ($(human_bytes "$best_size")))"
+      return 0
+    else
+      log "END  file WARN (no profile within tolerance, used best_idx=$best_idx size=$best_size ($(human_bytes "$best_size")))"
+      return 1
+    fi
   else
-    log "END  file WARN (no profile within tolerance, used best_idx=$best_idx size=$best_size ($(human_bytes "$best_size")))"
+    log "  ERROR: best_file missing after trials, copy original"
+    cp -f "$in" "$out"
+    log "END  file WARN (encode failed)"
     return 1
   fi
 }
@@ -331,6 +496,7 @@ log "  OUTPUT_DIR: $out_dir_abs"
 log "  LIMIT     : $max_bytes ($(human_bytes "$max_bytes"))"
 log "  MAX_W     : $max_w"
 log "  TOL       : $tol_bytes ($(human_bytes "$tol_bytes"))"
+log "  DUR_RANGE : ${DUR_MIN}-${DUR_MAX}s (eps=${DUR_EPS}s)"
 
 mapfile -d '' files < <(find "$in_dir_abs" -type f -iname '*.gif' -print0)
 
