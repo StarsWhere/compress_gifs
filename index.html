@@ -75,7 +75,10 @@
     <section class="panel logs">
       <div class="panel-head">
         <h2>日志</h2>
-        <button id="clear-logs" class="btn tiny ghost">清除</button>
+        <div style="display:flex; gap:8px;">
+          <button id="popup-logs" class="btn tiny ghost">弹出</button>
+          <button id="clear-logs" class="btn tiny ghost">清除</button>
+        </div>
       </div>
       <pre id="log-output" class="log-output"></pre>
     </section>
@@ -106,11 +109,22 @@
         <button class="btn tiny ghost download">下载</button>
         <button class="btn tiny ghost replay">用当前参数重压</button>
         <button class="btn tiny ghost toggle-log">查看日志</button>
+        <button class="btn tiny ghost popup-log">弹出</button>
       </div>
       <pre class="task-log hidden"></pre>
     </div>
   </template>
 
   <script type="module" src="./app.js"></script>
+
+  <div id="log-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-head">
+        <div id="log-modal-title">日志</div>
+        <button id="log-modal-close" class="btn tiny ghost">关闭</button>
+      </div>
+      <div id="log-modal-body" class="modal-body"></div>
+    </div>
+  </div>
 </body>
 </html>

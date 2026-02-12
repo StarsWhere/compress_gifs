@@ -4,10 +4,14 @@ import { FFmpeg } from './vendor/ffmpeg/index.js';
 
 let currentTaskId = null;
 
+const log = (msg) => {
+  postMessage({ type: 'log', id: currentTaskId, payload: msg });
+};
+
 const ffmpeg = new FFmpeg();
 ffmpeg.on('log', ({ type, message }) => {
   if (type === 'info' || type === 'fferr' || type === 'ffout' || type === 'warn') {
-    postMessage({ type: 'log', id: currentTaskId, payload: message });
+    log(message);
   }
 });
 
@@ -43,8 +47,12 @@ const buildProfiles = (maxW, preferKeep) => {
 
 const loadFFmpeg = async () => {
   if (ffmpeg.loaded) return;
-  // paths are resolved relative to vendor/ffmpeg/* because FFmpeg's own worker lives there
-  await ffmpeg.load();
+  const base = new URL('./vendor/ffmpeg/', self.location.href);
+  await ffmpeg.load({
+    coreURL: new URL('ffmpeg-core.js', base).href,
+    wasmURL: new URL('ffmpeg-core.wasm', base).href,
+    workerURL: new URL('ffmpeg-core.worker.js', base).href,
+  });
 };
 
 const writeInput = async (name, buffer) => {
@@ -97,6 +105,11 @@ const tryProfile = async (ctx, profileIdx, w, fps, colors) => {
     const sz = data.length;
     const absDiff = sz > target ? sz - target : target - sz;
     const side = sz > target ? 1 : -1;
+    if (params.verbose) {
+      log(
+        `档位#${profileIdx} 尝试: 宽=${w}, fps=${fps}, 色彩=${colors}, 输出=${humanBytes(sz)}, 偏差=${humanBytes(absDiff)} ${side > 0 ? '超标' : '达标'}`
+      );
+    }
 
     if (
       ctx.best.size === 0 ||
@@ -111,7 +124,7 @@ const tryProfile = async (ctx, profileIdx, w, fps, colors) => {
     ctx.last = { size: sz, side };
     return { sz, absDiff, side };
   } catch (err) {
-    postMessage({ type: 'log', payload: `PROFILE ${profileIdx} failed: ${err.message || err}` });
+    log(`档位#${profileIdx} 失败：${err.message || err}`);
     return null;
   } finally {
     await removeFileSafe(palette);
@@ -148,14 +161,24 @@ const processOne = async (payload) => {
     last: { size: 0, side: 0 },
   };
 
+  log(
+    `开始压缩：原始 ${humanBytes(meta.size)}，分辨率 ${meta.width || '?'}x${meta.height || '?'}，时长 ${
+      meta.duration ? `${meta.duration.toFixed(2)}s` : '未知'
+    }，目标上限 ${params.maxMb}MB，容差 ${params.tolMb}MB，最大宽度 ${maxW}px，模式 ${
+      params.preferKeep ? '优先保帧间隔' : '标准'
+    }`
+  );
+
   if (meta.duration !== null && needDur) {
     const targetDur = Math.min(Math.max(meta.duration, params.durMin), params.durMax);
     const factor = targetDur / (meta.duration || targetDur || 0.001);
     ctx.timefixPrefix = `setpts=${factor.toFixed(6)}*PTS`;
+    log(`调整时长：${meta.duration.toFixed(2)}s → ${targetDur.toFixed(2)}s (因 dur 范围限制)`);
   }
 
   if (!needSize && !needScale && !needDur) {
     const original = await ffmpeg.readFile(inputName);
+    log('无需重新编码，直接复用原文件');
     return { buffer: original, hit: true, bestIdx: -1, note: 'copied' };
   }
 
@@ -187,6 +210,16 @@ const processOne = async (payload) => {
     if (ctx.hit) break;
     if (ctx.last.size > target) l = mid + 1;
     else r = mid - 1;
+  }
+
+  if (ctx.best.data) {
+    log(
+      `最优候选：档位#${ctx.best.idx} 输出 ${humanBytes(ctx.best.size)}，偏差 ${humanBytes(
+        ctx.best.diff
+      )}，${ctx.hit ? '命中容差' : '未命中容差'}`
+    );
+  } else {
+    log('未找到候选结果，回退原文件');
   }
 
   return { buffer: ctx.best.data || (await ffmpeg.readFile(inputName)), hit: ctx.hit, bestIdx: ctx.best.idx };

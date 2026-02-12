@@ -238,6 +238,9 @@ const upsertTaskCard = (task) => {
     const logEl = el.querySelector('.task-log');
     logEl.classList.toggle('hidden');
   };
+  el.querySelector('.popup-log').onclick = () => {
+    openLogModal(task.logs.join('\n') || '暂无日志', `任务日志 · ${task.file.name}`);
+  };
   setTaskStatus(el, task.status || '排队中');
 };
 
@@ -343,6 +346,7 @@ const bindUI = () => {
   $('#add-preset').onclick = saveCurrentAsPreset;
   $('#toggle-advanced').onclick = toggleAdvanced;
   $('#clear-logs').onclick = () => { $('#log-output').textContent = ''; };
+  $('#popup-logs').onclick = () => openLogModal($('#log-output').textContent || '暂无日志', '全局日志');
 
   const dz = $('#dropzone');
   const prevent = (e) => { e.preventDefault(); e.stopPropagation(); };
@@ -359,6 +363,33 @@ const bootstrap = () => {
   bindUI();
   setupWorker();
   setGpuBadge();
+  setupLogModal();
 };
 
 document.addEventListener('DOMContentLoaded', bootstrap);
+
+// ---------- 日志弹窗 ----------
+let logModal = null;
+let logModalBody = null;
+let logModalTitle = null;
+const setupLogModal = () => {
+  logModal = $('#log-modal');
+  logModalBody = $('#log-modal-body');
+  logModalTitle = $('#log-modal-title');
+  $('#log-modal-close').onclick = () => closeLogModal();
+  logModal.addEventListener('click', (e) => {
+    if (e.target === logModal) closeLogModal();
+  });
+};
+
+const openLogModal = (text, title = '日志') => {
+  if (!logModal) return;
+  logModalBody.textContent = text;
+  logModalTitle.textContent = title;
+  logModal.classList.add('active');
+};
+
+const closeLogModal = () => {
+  if (!logModal) return;
+  logModal.classList.remove('active');
+};

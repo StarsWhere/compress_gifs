@@ -49,7 +49,7 @@ a { color: inherit; }
 
 .layout {
   display: grid;
-  grid-template-columns: 320px 1fr 380px;
+  grid-template-columns: 320px 1fr 460px;
   gap: 16px;
   padding: 0 24px 32px;
 }
@@ -183,16 +183,52 @@ input, select {
 
 .task-actions { display: flex; gap: 8px; margin-top: 8px; }
 
-.task-log { background: #060a16; border: 1px solid var(--border); border-radius: 12px; padding: 10px; max-height: 200px; overflow: auto; }
+.task-log { background: #060a16; border: 1px solid var(--border); border-radius: 12px; padding: 10px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .task-log.hidden { display: none; }
 
-.logs { max-height: 700px; overflow: auto; }
-.log-output { background: #060a16; border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 200px; color: #d1d5db; }
+.logs { max-height: 720px; min-height: 420px; display: flex; flex-direction: column; }
+.log-output { background: #060a16; border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 260px; flex: 1; color: #d1d5db; white-space: pre-wrap; word-break: break-word; }
 
 .badge.ok { color: var(--success); }
 .badge.warn { color: var(--warn); }
 .badge.err { color: var(--danger); }
 .badge.muted { color: var(--muted); }
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: #0b1224;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  max-width: 900px;
+  width: 90%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+.modal-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.modal-body {
+  padding: 12px 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'IBM Plex Mono', monospace;
+}
 
 @media (max-width: 1200px) {
   .layout { grid-template-columns: 1fr; }
