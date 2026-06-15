@@ -1,5 +1,31 @@
 # GIF 批量压缩脚本（compress_gifs.sh）
 
+<!-- starswhere-docs-overview -->
+
+## 项目概览
+
+**定位**：一个前端 GIF 压缩工具，利用浏览器端资源完成 GIF 解析、处理和压缩，适合静态部署。
+
+**核心功能**：
+- 本地浏览器处理 GIF，减少服务端压力
+- 集成 ffmpeg wasm 与 gifuct 相关资源
+- 提供 Web Worker 支撑耗时处理
+- 包含 Docker、Nginx 和设计说明
+
+**技术栈**：JavaScript、HTML/CSS、Web Worker、ffmpeg wasm、Docker/Nginx。
+
+**目录与模块**：`index.html`、`app.js`、`worker.js` 构成前端主体；`vendor/` 保存第三方处理库；`nginx.conf`、`Dockerfile` 支持静态部署。
+
+**使用方式**：可直接作为静态站点打开或通过容器部署；设计细节参考 `DESIGN.md`。
+
+**配置说明**：部署配置在 `nginx.conf`、`Dockerfile` 和 `docker-compose.yml`。
+
+**适用场景**：适合在线 GIF 压缩、前端媒体处理和静态工具站。
+
+**注意事项**：大文件处理受浏览器内存和 wasm 性能限制，移动端体验需要额外关注。
+
+<!-- /starswhere-docs-overview -->
+
 该脚本会递归扫描输入目录内的所有 `.gif` 文件，使用 ffmpeg 多档位压缩+二分搜索策略，将输出控制在指定大小上限附近，并保持与输入目录一致的相对路径结构输出到目标目录。可选地，会把时长归一化到指定范围内。
 
 ## 依赖
